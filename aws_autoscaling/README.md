@@ -1,0 +1,1 @@
+This is the module for AWS App Autoscaling. Contains a target app autoscaling resource and 2 autoscaling policies (Up, Down) 

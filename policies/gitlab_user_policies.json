@@ -1,0 +1,26 @@
+[
+  {
+    "PolicyName": "AmazonEC2FullAccess",
+    "PolicyArn": "arn:aws:iam::aws:policy/AmazonEC2FullAccess"
+  },
+  {
+    "PolicyName": "AmazonEC2ContainerRegistryFullAccess",
+    "PolicyArn": "arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryFullAccess"
+  },
+  {
+    "PolicyName": "CloudWatchLogsFullAccess",
+    "PolicyArn": "arn:aws:iam::aws:policy/CloudWatchLogsFullAccess"
+  },
+  {
+    "PolicyName": "AmazonECS_FullAccess",
+    "PolicyArn": "arn:aws:iam::aws:policy/AmazonECS_FullAccess"
+  },
+  {
+    "PolicyName": "AmazonVPCFullAccess",
+    "PolicyArn": "arn:aws:iam::aws:policy/AmazonVPCFullAccess"
+  },
+  {
+    "PolicyName": "TerraformIamServiceRole",
+    "PolicyArn": "arn:aws:iam::11111111111:policy/TerraformIamServiceRole"
+  }
+]

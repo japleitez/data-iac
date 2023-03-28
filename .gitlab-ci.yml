@@ -1,0 +1,531 @@
+include:
+  - project: 'datateam/ecdp-infra/aws/pipeline'
+    ref: 0.0.2
+    file:
+      - '.terraform-compliance.yml'
+      - '.tf_with_lint_template.yml'
+
+variables:
+  DEPLOY_MR: "false"
+  TF_ROOT: ${CI_PROJECT_DIR}/
+  TF_HTTP_ADDRESS: ""
+  TF_HTTP_LOCK_ADDRESS: ""
+  TF_HTTP_UNLOCK_ADDRESS: ""
+  DB_INSTANCE_IDENTIFIER:
+    value: ""
+    #    value: "terraform-20211213190831672400000004"
+    description: "Name of the DB instance"
+  TF_VAR_db_snapshot_identifier:
+    value: ""
+    #    value: "rds:terraform-20211210160614947100000007-2021-12-13-21-07"
+    description: "The identifier for the DB snapshot to restore from or name of new snapshot"
+  ELK_SNAPSHOT_ID:
+    value: ""
+    description: "Elasticsearch snapshot ID"
+  ELK_INDEX_ID:
+    value: ""
+    description: "Elasticsearch index ID in the selected snapshot ID"
+
+
+default:
+  artifacts:
+    expire_in: 1 yrs
+
+workflow:
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+      variables:
+        TF_VAR_environment: "mr"
+        TF_STATE_NAME: ${CI_PROJECT_NAME}_merge_request
+    - if: $CI_COMMIT_BRANCH
+      variables:
+        TF_VAR_environment: $CI_COMMIT_BRANCH
+        TF_STATE_NAME: ${CI_PROJECT_NAME}_${CI_COMMIT_BRANCH}
+    - when: always
+
+stages:
+  - tests
+  - validate
+  - build
+  - plan-tests
+  - deploy
+  - setup
+  - cleanup
+
+validate:
+  needs: []
+  extends: .validate
+  script:
+    - >
+      if [ -n "$BRIDGE_TAG" ]; then 
+         export TF_VAR_data_acquisition_service_tag="$BRIDGE_TAG";
+         export TF_VAR_playground_service_tag="$BRIDGE_TAG";
+      fi;
+    - echo "BRIDGE_TAG value is $BRIDGE_TAG"
+    - echo "TF_VAR_data_acquisition_service_tag value is $TF_VAR_data_acquisition_service_tag"
+    - echo "TF_VAR_playground_service_tag value is $TF_VAR_playground_service_tag"
+
+build:
+  needs:
+    - job: validate
+      artifacts: true
+  extends: .build
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+      when: on_success
+    - if: $CI_COMMIT_REF_NAME =~ /^feature/
+      when: never
+    - if: $CI_COMMIT_REF_NAME =~ /^fix/
+      when: never
+    - when: on_success
+
+build-services:
+  needs:
+    - job: validate
+      artifacts: true
+  extends: .build
+  script:
+    - >
+      if [ -n "$BRIDGE_TAG" ]; then 
+         export TF_VAR_data_acquisition_service_tag="$BRIDGE_TAG";
+         export TF_VAR_playground_service_tag="$BRIDGE_TAG";
+      fi;
+    - echo "BRIDGE_TAG value is $BRIDGE_TAG"
+    - echo "TF_VAR_data_acquisition_service_tag value is $TF_VAR_data_acquisition_service_tag"
+    - echo "TF_VAR_playground_service_tag value is $TF_VAR_playground_service_tag"
+    - cd ${TF_ROOT}
+    - gitlab-terraform init
+    - gitlab-terraform plan -target="module.dashboard" ${TF_TEST_VARS}
+    - gitlab-terraform plan-json -target="module.dashboard" ${TF_TEST_VARS}
+    - gitlab-terraform show -json plan.cache > plan.compliance.json
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+      when: manual
+    - if: $CI_COMMIT_REF_NAME =~ /^feature/
+      when: never
+    - if: $CI_COMMIT_REF_NAME =~ /^fix/
+      when: never
+    - when: manual
+
+build-storm:
+  needs:
+    - job: validate
+      artifacts: true
+  extends: .build
+  script:
+    - cd ${TF_ROOT}
+    - gitlab-terraform init
+    - gitlab-terraform plan -target="module.storm_cluster" -target="module.storm_cloudwatch" -target="module.zookeeper" -target="module.storm" ${TF_TEST_VARS}
+    - gitlab-terraform plan-json -target="module.storm_cluster" -target="module.storm_cloudwatch" -target="module.zookeeper" -target="module.storm" ${TF_TEST_VARS}
+    - gitlab-terraform show -json plan.cache > plan.compliance.json
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+      when: manual
+    - if: $CI_COMMIT_REF_NAME =~ /^feature/
+      when: never
+    - if: $CI_COMMIT_REF_NAME =~ /^fix/
+      when: never
+    - when: manual
+
+build-mwaa:
+  needs:
+    - job: validate
+      artifacts: true
+  extends: .build
+  script:
+    - cd ${TF_ROOT}
+    - gitlab-terraform init
+    - gitlab-terraform plan -target="module.mwaa" ${TF_TEST_VARS}
+    - gitlab-terraform plan-json -target="module.mwaa" ${TF_TEST_VARS}
+    - gitlab-terraform show -json plan.cache > plan.compliance.json
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+      when: manual
+    - if: $CI_COMMIT_REF_NAME =~ /^feature/
+      when: never
+    - if: $CI_COMMIT_REF_NAME =~ /^fix/
+      when: never
+    - when: manual
+
+build-selenium:
+  needs:
+    - job: validate
+      artifacts: true
+  extends: .build
+  script:
+    - cd ${TF_ROOT}
+    - gitlab-terraform init
+    - gitlab-terraform plan -target="module.selenium" ${TF_TEST_VARS}
+    - gitlab-terraform plan-json -target="module.selenium" ${TF_TEST_VARS}
+    - gitlab-terraform show -json plan.cache > plan.compliance.json
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+      when: manual
+    - if: $CI_COMMIT_REF_NAME =~ /^feature/
+      when: never
+    - if: $CI_COMMIT_REF_NAME =~ /^fix/
+      when: never
+    - when: manual
+
+plan-tests:
+  needs:
+    - job: build
+      artifacts: true
+  extends:
+    - .tf-comp
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event" && $DEPLOY_MR == "false" && $CI_MERGE_REQUEST_SOURCE_BRANCH_NAME =~ /^feature/
+      when: on_success
+    - if: $CI_COMMIT_REF_NAME =~ /^feature/
+      when: never
+    - if: $CI_COMMIT_REF_NAME =~ /^fix/
+      when: never
+    - when: on_success
+
+deploy:
+  extends: .deploy
+  needs:
+    - job: build
+      artifacts: true
+  script:
+    - cd ${TF_ROOT}
+    - gitlab-terraform apply
+    - export KIBANA_AWS=$(gitlab-terraform output elastic_search_endpoint| tr -d '"')
+    - export BASTION_ID=$(gitlab-terraform output instance_id | tr -d '"')
+    - echo "KIBANA_AWS=$KIBANA_AWS" >> build.env
+    - echo "BASTION_ID=$BASTION_ID" >> build.env
+  artifacts:
+    reports:
+      dotenv: build.env
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event" && $DEPLOY_MR == "true" && $CI_MERGE_REQUEST_SOURCE_BRANCH_NAME =~ /^feature/
+      when: manual
+    - if: $CI_COMMIT_REF_NAME =~ /^feature/
+      when: never
+    - if: $CI_COMMIT_REF_NAME =~ /^fix/
+      when: never
+    - if: $CI_COMMIT_REF_NAME =~ /^development/ || $CI_COMMIT_REF_NAME =~ /^test/ || $CI_COMMIT_REF_NAME =~ /^pre/ || $CI_COMMIT_REF_NAME =~ /^prod/
+      when: manual
+    - when: never
+
+deploy-services:
+  extends: .deploy
+  needs:
+    - job: build-services
+      artifacts: true
+  script:
+    - cd ${TF_ROOT}
+    - gitlab-terraform apply -target="module.dashboard" ${TF_TEST_VARS}
+    - export ELASTIC_AWS=$(gitlab-terraform output elastic_search_endpoint| tr -d '"')
+    - export BASTION_ELK_ID=$(gitlab-terraform output instance_id | tr -d '"')
+    - echo > cd ${TF_ROOT}
+    - echo "ELASTIC_AWS=$ELASTIC_AWS" >> build.env
+    - echo "BASTION_ELK_ID=$BASTION_ELK_ID" >> build.env
+    - echo "ELASTIC_AWS value is $ELASTIC_AWS"
+    - echo "BASTION_ELK_ID value is $BASTION_ELK_ID"
+  artifacts:
+    reports:
+      dotenv: build.env
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event" && $DEPLOY_MR == "true" && $CI_MERGE_REQUEST_SOURCE_BRANCH_NAME =~ /^feature/
+      when: manual
+    - if: $CI_COMMIT_REF_NAME =~ /^feature/
+      when: never
+    - if: $CI_COMMIT_REF_NAME =~ /^fix/
+      when: never
+    - if: $CI_COMMIT_REF_NAME =~ /^development/ || $CI_COMMIT_REF_NAME =~ /^test/ || $CI_COMMIT_REF_NAME =~ /^pre/ || $CI_COMMIT_REF_NAME =~ /^prod/
+      when: manual
+    - when: never
+
+deploy-storm:
+  extends: .deploy
+  needs:
+    - job: build-storm
+      artifacts: true
+  script:
+    - cd ${TF_ROOT}
+    - gitlab-terraform apply -target="module.storm_cluster" -target="module.storm_cloudwatch" -target="module.zookeeper" -target="module.storm" ${TF_TEST_VARS}
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event" && $DEPLOY_MR == "true" && $CI_MERGE_REQUEST_SOURCE_BRANCH_NAME =~ /^feature/
+      when: manual
+    - if: $CI_COMMIT_REF_NAME =~ /^feature/
+      when: never
+    - if: $CI_COMMIT_REF_NAME =~ /^fix/
+      when: never
+    - if: $CI_COMMIT_REF_NAME =~ /^development/ || $CI_COMMIT_REF_NAME =~ /^test/ || $CI_COMMIT_REF_NAME =~ /^pre/ || $CI_COMMIT_REF_NAME =~ /^prod/
+      when: manual
+    - when: never
+
+deploy-mwaa:
+  extends: .deploy
+  needs:
+    - job: build-mwaa
+      artifacts: true
+  script:
+    - cd ${TF_ROOT}
+    - gitlab-terraform apply -target="module.mwaa" ${TF_TEST_VARS}
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event" && $DEPLOY_MR == "true" && $CI_MERGE_REQUEST_SOURCE_BRANCH_NAME =~ /^feature/
+      when: manual
+    - if: $CI_COMMIT_REF_NAME =~ /^feature/
+      when: never
+    - if: $CI_COMMIT_REF_NAME =~ /^fix/
+      when: never
+    - if: $CI_COMMIT_REF_NAME =~ /^development/ || $CI_COMMIT_REF_NAME =~ /^test/ || $CI_COMMIT_REF_NAME =~ /^pre/ || $CI_COMMIT_REF_NAME =~ /^prod/
+      when: manual
+    - when: never
+
+deploy-selenium:
+  extends: .deploy
+  needs:
+    - job: build-selenium
+      artifacts: true
+  script:
+    - cd ${TF_ROOT}
+    - gitlab-terraform apply -target="module.selenium" ${TF_TEST_VARS}
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event" && $DEPLOY_MR == "true" && $CI_MERGE_REQUEST_SOURCE_BRANCH_NAME =~ /^feature/
+      when: manual
+    - if: $CI_COMMIT_REF_NAME =~ /^feature/
+      when: never
+    - if: $CI_COMMIT_REF_NAME =~ /^fix/
+      when: never
+    - if: $CI_COMMIT_REF_NAME =~ /^development/ || $CI_COMMIT_REF_NAME =~ /^test/ || $CI_COMMIT_REF_NAME =~ /^pre/ || $CI_COMMIT_REF_NAME =~ /^prod/
+      when: manual
+    - when: never
+
+kibana-deploy:
+  stage: setup
+  needs:
+    - job: deploy
+      artifacts: true
+  script:
+    - echo "$BASTION_PEM" >> "$(pwd)/bastion.pem"
+    - chmod 400 $(pwd)/bastion.pem
+    - ssh -4 -i $(pwd)/bastion.pem $BASTION_ID -o StrictHostKeyChecking=no -o ExitOnForwardFailure=yes -f -N -L 9200:$KIBANA_AWS:443
+    - 'curl -X POST -k "https://localhost:9200/_plugin/kibana/api/saved_objects/_import?overwrite=true" -H "kbn-xsrf: true" --form file=@kibana/failed_acquisitions.ndjson'
+    - 'curl -X POST -k "https://localhost:9200/_plugin/kibana/api/saved_objects/_import?overwrite=true" -H "kbn-xsrf: true" --form file=@kibana/metrics.ndjson'
+    - 'curl -X POST -k "https://localhost:9200/_plugin/kibana/api/saved_objects/_import?overwrite=true" -H "kbn-xsrf: true" --form file=@kibana/ongoing_acquisitions.ndjson'
+    - 'curl -X POST -k "https://localhost:9200/_plugin/kibana/api/saved_objects/_import?overwrite=true" -H "kbn-xsrf: true" --form file=@kibana/status.ndjson'
+    - 'curl -X POST -k "https://localhost:9200/_plugin/kibana/api/saved_objects/_import?overwrite=true" -H "kbn-xsrf: true" --form file=@kibana/storm.ndjson'
+    - 'curl -X POST -k "https://localhost:9200/_plugin/kibana/api/saved_objects/_import?overwrite=true" -H "kbn-xsrf: true" --form file=@kibana/successful_acquisitions.ndjson'
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event" && $DEPLOY_MR == "true" && $CI_MERGE_REQUEST_SOURCE_BRANCH_NAME =~ /^feature/
+      when: manual
+    - if: $CI_COMMIT_REF_NAME =~ /^feature/
+      when: never
+    - if: $CI_COMMIT_REF_NAME =~ /^fix/
+      when: never
+    - if: $CI_COMMIT_REF_NAME =~ /^development/ || $CI_COMMIT_REF_NAME =~ /^test/ || $CI_COMMIT_REF_NAME =~ /^pre/ || $CI_COMMIT_REF_NAME =~ /^prod/
+      when: manual
+    - when: never
+
+tags:
+  stage: setup
+  needs:
+    - job: deploy
+      artifacts: true
+  image: registry.fpfis.eu/datateam/ecdp-infra/container/docker/pipeline-images/debian-awscliv2:0-0-2
+  before_script:
+    - aws configure set aws_access_key_id $WIHP_AWS_SECRET_ACCESS_KEY_ID
+    - aws configure set aws_secret_access_key $WIHP_AWS_SECRET_ACCESS_KEY
+    - aws configure set region $AWS_DEFAULT_REGION
+  script:
+    - aws logs tag-log-group --log-group-name /aws/ecs/containerinsights/dc-dashboard-${TF_VAR_environment}-cluster/performance --tags
+      Environment=${TF_VAR_environment},Name=dc-dashboard-${TF_VAR_environment},Project=Eurostat-WIHP,Terraform=true
+    - aws logs tag-log-group --log-group-name /aws/ecs/containerinsights/selenium-${TF_VAR_environment}-cluster/performance --tags
+      Environment=${TF_VAR_environment},Name=selenium-${TF_VAR_environment},Project=Eurostat-WIHP,Terraform=true
+    - aws logs tag-log-group --log-group-name /aws/ecs/containerinsights/storm-${TF_VAR_environment}-cluster/performance --tags
+      Environment=${TF_VAR_environment},Name=storm-${TF_VAR_environment},Project=Eurostat-WIHP,Terraform=true
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event" && $DEPLOY_MR == "true" && $CI_MERGE_REQUEST_SOURCE_BRANCH_NAME =~ /^feature/
+      when: on_success
+    - if: $CI_COMMIT_REF_NAME =~ /^feature/
+      when: never
+    - if: $CI_COMMIT_REF_NAME =~ /^fix/
+      when: never
+    - if: $CI_COMMIT_REF_NAME =~ /^development/ || $CI_COMMIT_REF_NAME =~ /^test/ || $CI_COMMIT_REF_NAME =~ /^pre/ || $CI_COMMIT_REF_NAME =~ /^prod/
+      when: manual
+    - when: never
+
+elastic-snapshots:
+  stage: setup
+  needs:
+    - job: deploy-services
+      artifacts: true
+  script:
+    - echo "$BASTION_PEM" >> "$(pwd)/bastion.pem"
+    - chmod 400 $(pwd)/bastion.pem
+    - echo "ELASTIC_AWS value is $ELASTIC_AWS"
+    - echo "BASTION_ELK_ID value is $BASTION_ELK_ID"
+    - ssh -4 -i $(pwd)/bastion.pem $BASTION_ELK_ID -o StrictHostKeyChecking=no -o ExitOnForwardFailure=yes -f -N -L 9200:$ELASTIC_AWS:443
+    - 'curl -k --location --output elastic-snapshots.json "https://localhost:9200/_snapshot/cs-automated/_all?pretty"'
+  artifacts:
+    paths:
+      - elastic-snapshots.json
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event" && $DEPLOY_MR == "true" && $CI_MERGE_REQUEST_SOURCE_BRANCH_NAME =~ /^feature/
+      when: manual
+    - if: $CI_COMMIT_REF_NAME =~ /^feature/
+      when: never
+    - if: $CI_COMMIT_REF_NAME =~ /^fix/
+      when: never
+    - if: $CI_COMMIT_REF_NAME =~ /^development/ || $CI_COMMIT_REF_NAME =~ /^test/ || $CI_COMMIT_REF_NAME =~ /^pre/ || $CI_COMMIT_REF_NAME =~ /^prod/
+      when: manual
+    - when: never
+
+elastic-restore-snapshot:
+  stage: setup
+  needs:
+    - job: deploy-services
+  script:
+    - echo "$BASTION_PEM" >> "$(pwd)/bastion.pem"
+    - chmod 400 $(pwd)/bastion.pem
+    - echo "ELASTIC_AWS value is $ELASTIC_AWS"
+    - echo "BASTION_ELK_ID value is $BASTION_ELK_ID"
+    - echo "ELK_SNAPSHOT_ID value is  ${ELK_SNAPSHOT_ID}"
+    - echo "ELK_INDEX_ID value is  ${ELK_INDEX_ID}"
+    - ssh -4 -i $(pwd)/bastion.pem $BASTION_ELK_ID -o StrictHostKeyChecking=no -o ExitOnForwardFailure=yes -f -N -L 9200:$ELASTIC_AWS:443
+    - 'curl -XPOST -k "https://localhost:9200/_snapshot/cs-automated/${ELK_SNAPSHOT_ID}/_restore" -d ''{"indices": "*''${ELK_INDEX_ID}''", "include_global_state": false}'' -H "Content-Type: application/json"'
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event" && $DEPLOY_MR == "true" && $CI_MERGE_REQUEST_SOURCE_BRANCH_NAME =~ /^feature/
+      when: manual
+    - if: $CI_COMMIT_REF_NAME =~ /^feature/
+      when: never
+    - if: $CI_COMMIT_REF_NAME =~ /^fix/
+      when: never
+    - if: $CI_COMMIT_REF_NAME =~ /^development/ || $CI_COMMIT_REF_NAME =~ /^test/ || $CI_COMMIT_REF_NAME =~ /^pre/ || $CI_COMMIT_REF_NAME =~ /^prod/
+      when: manual
+    - when: never
+
+create-snapshot:
+  stage: build
+  image: registry.fpfis.eu/datateam/ecdp-infra/container/docker/pipeline-images/debian-awscliv2:0-0-2
+  before_script:
+    - aws configure set aws_access_key_id $WIHP_AWS_SECRET_ACCESS_KEY_ID
+    - aws configure set aws_secret_access_key $WIHP_AWS_SECRET_ACCESS_KEY
+    - aws configure set region $AWS_DEFAULT_REGION
+  script:
+    - echo > aws rds create-db-snapshot --db-instance-identifier ${DB_INSTANCE_IDENTIFIER} --db-snapshot-identifier ${TF_VAR_db_snapshot_identifier}
+    - aws rds create-db-snapshot --db-instance-identifier ${DB_INSTANCE_IDENTIFIER} --db-snapshot-identifier ${TF_VAR_db_snapshot_identifier}
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event" && $DEPLOY_MR == "true" && $CI_MERGE_REQUEST_SOURCE_BRANCH_NAME =~ /^feature/
+      when: manual
+    - if: $CI_COMMIT_REF_NAME =~ /^feature/
+      when: never
+    - if: $CI_COMMIT_REF_NAME =~ /^fix/
+      when: never
+    - if: $CI_COMMIT_REF_NAME =~ /^development/ || $CI_COMMIT_REF_NAME =~ /^test/ || $CI_COMMIT_REF_NAME =~ /^pre/ || $CI_COMMIT_REF_NAME =~ /^prod/
+      when: manual
+    - when: never
+
+delete-db-instance:
+  stage: build
+  image: registry.fpfis.eu/datateam/ecdp-infra/container/docker/pipeline-images/debian-awscliv2:0-0-2
+  before_script:
+    - aws configure set aws_access_key_id $WIHP_AWS_SECRET_ACCESS_KEY_ID
+    - aws configure set aws_secret_access_key $WIHP_AWS_SECRET_ACCESS_KEY
+    - aws configure set region $AWS_DEFAULT_REGION
+  script:
+    - echo > aws rds delete-db-instance --db-instance-identifier $DB_INSTANCE_IDENTIFIER --final-db-snapshot-identifier $DB_INSTANCE_IDENTIFIER-final-sn
+    - aws rds delete-db-instance --db-instance-identifier ${DB_INSTANCE_IDENTIFIER} --final-db-snapshot-identifier ${DB_INSTANCE_IDENTIFIER}-final-sn
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event" && $DEPLOY_MR == "true" && $CI_MERGE_REQUEST_SOURCE_BRANCH_NAME =~ /^feature/
+      when: manual
+    - if: $CI_COMMIT_REF_NAME =~ /^feature/
+      when: never
+    - if: $CI_COMMIT_REF_NAME =~ /^fix/
+      when: never
+    - if: $CI_COMMIT_REF_NAME =~ /^development/ || $CI_COMMIT_REF_NAME =~ /^test/ || $CI_COMMIT_REF_NAME =~ /^pre/
+      when: manual
+    - if: $CI_COMMIT_REF_NAME =~ /^prod/
+      when: never
+    - when: never
+
+destroy:
+  extends: .destroy
+  needs:
+    - job: build
+      artifacts: true
+  dependencies: []
+  script:
+    - echo > cd ${TF_ROOT}
+    - cd ${TF_ROOT}
+    - echo gitlab-terraform destroy ${TF_TEST_VARS}
+    - gitlab-terraform destroy ${TF_TEST_VARS}
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event" && $DEPLOY_MR == "true" && $CI_MERGE_REQUEST_SOURCE_BRANCH_NAME =~ /^feature/
+      when: manual
+    - if: $CI_COMMIT_REF_NAME  =~ /^feature/
+      when: never
+    - if: $CI_COMMIT_REF_NAME =~ /^fix/
+      when: never
+    - if: $CI_COMMIT_REF_NAME =~ /^development/ || $CI_COMMIT_REF_NAME =~ /^test/ || $CI_COMMIT_REF_NAME =~ /^pre/ || $CI_COMMIT_REF_NAME =~ /^prod/
+      when: manual
+    - when: never
+
+destroy-storm:
+  extends: .destroy
+  needs:
+    - job: build-storm
+      artifacts: true
+  dependencies: []
+  script:
+    - echo > cd ${TF_ROOT}
+    - cd ${TF_ROOT}
+    - echo gitlab-terraform destroy ${TF_TEST_VARS}
+    - gitlab-terraform destroy -target="module.storm_cluster" -target="module.storm_cloudwatch" -target="module.zookeeper" -target="module.storm"   ${TF_TEST_VARS}
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event" && $DEPLOY_MR == "true" && $CI_MERGE_REQUEST_SOURCE_BRANCH_NAME =~ /^feature/
+      when: manual
+    - if: $CI_COMMIT_REF_NAME  =~ /^feature/
+      when: never
+    - if: $CI_COMMIT_REF_NAME =~ /^fix/
+      when: never
+    - if: $CI_COMMIT_REF_NAME =~ /^development/ || $CI_COMMIT_REF_NAME =~ /^test/ || $CI_COMMIT_REF_NAME =~ /^pre/ || $CI_COMMIT_REF_NAME =~ /^prod/
+      when: manual
+    - when: never
+
+destroy-mwaa:
+  extends: .destroy
+  needs:
+    - job: build-mwaa
+      artifacts: true
+  dependencies: []
+  script:
+    - echo > cd ${TF_ROOT}
+    - cd ${TF_ROOT}
+    - echo gitlab-terraform destroy ${TF_TEST_VARS}
+    - gitlab-terraform destroy -target="module.mwaa" ${TF_TEST_VARS}
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event" && $DEPLOY_MR == "true" && $CI_MERGE_REQUEST_SOURCE_BRANCH_NAME =~ /^feature/
+      when: manual
+    - if: $CI_COMMIT_REF_NAME  =~ /^feature/
+      when: never
+    - if: $CI_COMMIT_REF_NAME =~ /^fix/
+      when: never
+    - if: $CI_COMMIT_REF_NAME =~ /^development/ || $CI_COMMIT_REF_NAME =~ /^test/ || $CI_COMMIT_REF_NAME =~ /^pre/ || $CI_COMMIT_REF_NAME =~ /^prod/
+      when: manual
+    - when: never
+
+destroy-selenium:
+  extends: .destroy
+  needs:
+    - job: build-selenium
+      artifacts: true
+  dependencies: []
+  script:
+    - echo > cd ${TF_ROOT}
+    - cd ${TF_ROOT}
+    - echo gitlab-terraform destroy ${TF_TEST_VARS}
+    - gitlab-terraform destroy -target="module.selenium" ${TF_TEST_VARS}
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event" && $DEPLOY_MR == "true" && $CI_MERGE_REQUEST_SOURCE_BRANCH_NAME =~ /^feature/
+      when: manual
+    - if: $CI_COMMIT_REF_NAME  =~ /^feature/
+      when: never
+    - if: $CI_COMMIT_REF_NAME =~ /^fix/
+      when: never
+    - if: $CI_COMMIT_REF_NAME =~ /^development/ || $CI_COMMIT_REF_NAME =~ /^test/ || $CI_COMMIT_REF_NAME =~ /^pre/ || $CI_COMMIT_REF_NAME =~ /^prod/
+      when: manual
+    - when: never

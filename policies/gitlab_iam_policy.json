@@ -1,0 +1,35 @@
+{
+  "Document": {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Sid": "VisualEditor0",
+        "Effect": "Allow",
+        "Action": [
+          "iam:CreateInstanceProfile",
+          "iam:GetRole",
+          "iam:ListInstanceProfilesForRole",
+          "iam:GetInstanceProfile",
+          "iam:TagRole",
+          "iam:CreateRole",
+          "iam:DeleteRole",
+          "iam:AttachRolePolicy",
+          "iam:PutRolePolicy",
+          "iam:ListRolePolicies",
+          "iam:RemoveRoleFromInstanceProfile",
+          "iam:DeleteInstanceProfile",
+          "iam:AddRoleToInstanceProfile",
+          "iam:PassRole",
+          "iam:DetachRolePolicy"
+        ],
+        "Resource": [
+          "arn:aws:iam::*:instance-profile/WIHP*",
+          "arn:aws:iam::*:role/WIHP*"
+        ]
+      }
+    ]
+  },
+  "VersionId": "v14",
+  "IsDefaultVersion": true,
+  "CreateDate": "2021-05-26T07:37:58+00:00"
+}
